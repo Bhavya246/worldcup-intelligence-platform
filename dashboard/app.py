@@ -103,7 +103,7 @@ st.sidebar.markdown("| Logistic Regression | 60.2% | 0.872 |")
 st.sidebar.markdown("| XGBoost | 59.7% | 0.886 |")
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Dataset:** 25,403 matches (2000–2026)")
-st.sidebar.markdown("**Made by Bhavya Sharma**")
+st.sidebar.markdown("**Made by Bhavya Arora**")
 
 # Header
 st.title("⚽ WorldCup Intelligence Platform")
