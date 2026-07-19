@@ -166,7 +166,7 @@ Custom Elo engine with:
 
 ## 👤 Author
 
-**Bhavya Sharma**
+**Bhavya Arora**
 Associate Software Engineer · Accenture India
 B.Tech Information Technology · Manipal University Jaipur (2024)
 
