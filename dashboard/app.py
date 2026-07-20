@@ -9,33 +9,37 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
 
-from worldcup_intelligence.models.logistic import LogisticMatchPredictor
-from worldcup_intelligence.models.xgboost_model import XGBoostMatchPredictor
+from worldcup_intelligence.predictor import MatchPredictor
+from worldcup_intelligence.models.score_predictor import PoissonScorePredictor
 from worldcup_intelligence.elo import EloRatingEngine
 
 st.set_page_config(page_title="WorldCup Intelligence Platform", page_icon="⚽", layout="wide")
 
-@st.cache_resource
-def load_models():
-    lr = LogisticMatchPredictor()
-    lr.load_model(ROOT / "models" / "logistic_regression.joblib")
-    xgb = XGBoostMatchPredictor()
-    xgb.load_model(ROOT / "models" / "xgboost_model.joblib")
-    return lr, xgb
+MODEL_OPTIONS = {
+    "Logistic Regression": "logistic",
+    "XGBoost": "xgboost",
+    "XGBoost (Tuned)": "xgboost_tuned",
+    "MLP Neural Network": "mlp",
+    "Ensemble (LR+XGBt+MLP)": "ensemble",
+}
 
-@st.cache_data
-def load_elo_ratings():
-    df = pd.read_csv(ROOT / "data" / "processed" / "ml_matches.csv")
-    df = df.sort_values("match_index").reset_index(drop=True)
-    engine = EloRatingEngine()
-    for _, row in df.iterrows():
-        engine.process_match(
-            home_team=row["home_team"], away_team=row["away_team"],
-            home_score=int(row["home_score"]), away_score=int(row["away_score"]),
-            tournament=row.get("tournament"), neutral=row.get("neutral", False),
-            date=str(row["date"]) if pd.notna(row.get("date")) else None,
-        )
-    return engine
+MODEL_STATS = {
+    "Logistic Regression":     {"accuracy": "60.35%", "log_loss": "0.872"},
+    "XGBoost":                 {"accuracy": "59.94%", "log_loss": "0.883"},
+    "XGBoost (Tuned)":         {"accuracy": "60.62%", "log_loss": "0.885"},
+    "MLP Neural Network":      {"accuracy": "59.88%", "log_loss": "0.879"},
+    "Ensemble (LR+XGBt+MLP)": {"accuracy": "60.51%", "log_loss": "0.869"},
+}
+
+@st.cache_resource
+def load_predictor(model_name):
+    return MatchPredictor.load(model_name=model_name)
+
+@st.cache_resource
+def load_scorer():
+    scorer = PoissonScorePredictor()
+    scorer.load()
+    return scorer
 
 @st.cache_data
 def get_team_list():
@@ -60,15 +64,6 @@ def get_team_history(team):
         )
     return pd.DataFrame(history)
 
-def make_prediction(predictor, home, away, neutral, k):
-    engine = load_elo_ratings()
-    return predictor.predict_match(
-        home_team=home, away_team=away,
-        home_elo=engine.get_team_rating(home),
-        away_elo=engine.get_team_rating(away),
-        neutral=neutral, tournament_k_factor=k,
-    )
-
 def prob_bar(h, d, a, home, away):
     fig, ax = plt.subplots(figsize=(8, 0.8))
     fig.patch.set_facecolor("#0e1117")
@@ -85,92 +80,117 @@ def prob_bar(h, d, a, home, away):
     st.pyplot(fig, use_container_width=True)
     plt.close()
 
-lr_model, xgb_model = load_models()
-teams = get_team_list()
-engine = load_elo_ratings()
+def scoreline_chart(top_scorelines, home, away):
+    labels = [s["score"] for s in top_scorelines[:8]]
+    probs = [s["probability"]*100 for s in top_scorelines[:8]]
+    colors = []
+    for s in top_scorelines[:8]:
+        if s["home_goals"] > s["away_goals"]: colors.append("#00c853")
+        elif s["away_goals"] > s["home_goals"]: colors.append("#ff1744")
+        else: colors.append("#ffd600")
+    fig, ax = plt.subplots(figsize=(10, 3))
+    fig.patch.set_facecolor("#0e1117")
+    ax.set_facecolor("#0e1117")
+    bars = ax.bar(labels, probs, color=colors)
+    for bar, prob in zip(bars, probs):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                f"{prob:.1f}%", ha="center", va="bottom", color="white", fontsize=9)
+    ax.set_ylabel("Probability (%)", color="#aaaaaa")
+    ax.set_title(f"Top Scorelines: {home} vs {away}", color="#ffffff")
+    ax.tick_params(colors="#aaaaaa")
+    ax.spines["bottom"].set_color("#3d4570")
+    ax.spines["left"].set_color("#3d4570")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    from matplotlib.patches import Patch
+    legend = [Patch(color="#00c853", label=f"{home} win"),
+              Patch(color="#ffd600", label="Draw"),
+              Patch(color="#ff1744", label=f"{away} win")]
+    ax.legend(handles=legend, facecolor="#1e2130", labelcolor="#ffffff")
+    st.pyplot(fig, use_container_width=True)
+    plt.close()
 
 # Sidebar
 st.sidebar.title("⚽ WorldCup Intelligence")
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🏆 FIFA World Cup 2026")
-st.sidebar.markdown("**🏅 Final**")
-st.sidebar.markdown("🇦🇷 Argentina vs Spain 🇪🇸  \n*July 19 · MetLife Stadium, NJ*")
+st.sidebar.markdown("**🥇 Final · July 19**")
+st.sidebar.markdown("🇦🇷 Argentina vs Spain 🇪🇸")
+st.sidebar.markdown("*MetLife Stadium, New Jersey*")
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 📊 Model Performance")
-st.sidebar.markdown("| Model | Accuracy | Log Loss |")
-st.sidebar.markdown("|-------|----------|----------|")
-st.sidebar.markdown("| Logistic Regression | 60.2% | 0.872 |")
-st.sidebar.markdown("| XGBoost | 59.7% | 0.886 |")
+st.sidebar.markdown("### 🤖 Select Model")
+model_label = st.sidebar.selectbox("", list(MODEL_OPTIONS.keys()))
+model_key = MODEL_OPTIONS[model_label]
+stats = MODEL_STATS[model_label]
+st.sidebar.markdown(f"**Accuracy:** {stats['accuracy']}  \n**Log Loss:** {stats['log_loss']}")
 st.sidebar.markdown("---")
-st.sidebar.markdown("**Dataset:** 25,403 matches (2000–2026)")
+st.sidebar.markdown("**Dataset:** 25,457 matches (2000–2026)")
 st.sidebar.markdown("**Made by Bhavya Arora**")
+
+predictor = load_predictor(model_key)
+scorer = load_scorer()
+teams = get_team_list()
 
 # Header
 st.title("⚽ WorldCup Intelligence Platform")
 st.markdown("*ML-powered match predictions · FIFA World Cup 2026*")
 st.markdown("---")
 
-# Model selector
-st.markdown("## 🤖 Select Model")
-model_choice = st.radio("", ["Logistic Regression", "XGBoost"], horizontal=True)
-active_model = lr_model if model_choice == "Logistic Regression" else xgb_model
-st.markdown("---")
-
 # Final prediction
 st.markdown("## 🏆 World Cup Final Prediction")
 st.markdown("**Argentina vs Spain · July 19 · MetLife Stadium, New Jersey**")
-final_pred = make_prediction(active_model, "Argentina", "Spain", True, 60)
-h = final_pred["home_win_probability"]
-d = final_pred["draw_probability"]
-a = final_pred["away_win_probability"]
+
+final = predictor.predict_with_score("Argentina", "Spain", neutral=True, tournament="FIFA World Cup")
+outcome = final["outcome"]
+score = final["score"]
+
 f1, f2, f3, f4 = st.columns(4)
-f1.metric("🇦🇷 Argentina", f"{h*100:.1f}%", f"Elo: {final_pred['home_elo']:.0f}")
-f2.metric("🤝 Draw", f"{d*100:.1f}%")
-f3.metric("🇪🇸 Spain", f"{a*100:.1f}%", f"Elo: {final_pred['away_elo']:.0f}")
-f4.metric("🏆 Predicted Winner", final_pred["predicted_winner"])
-prob_bar(h, d, a, "Argentina", "Spain")
-st.success(f"Model predicts: {final_pred['predicted_winner']} wins · Confidence: {final_pred['confidence']*100:.1f}% · Model: {model_choice}")
+f1.metric("🇦🇷 Argentina", f"{outcome.home_win_probability*100:.1f}%", f"Elo: {outcome.home_elo:.0f}")
+f2.metric("🤝 Draw", f"{outcome.draw_probability*100:.1f}%")
+f3.metric("🇪🇸 Spain", f"{outcome.away_win_probability*100:.1f}%", f"Elo: {outcome.away_elo:.0f}")
+f4.metric("🏆 Predicted Winner", outcome.predicted_winner)
+prob_bar(outcome.home_win_probability, outcome.draw_probability, outcome.away_win_probability, "Argentina", "Spain")
+st.success(f"Model predicts: {outcome.predicted_winner} wins · Confidence: {outcome.confidence*100:.1f}% · {model_label}")
+
+# Scoreline section
+st.markdown("### ⚽ Scoreline Prediction")
+sc1, sc2, sc3 = st.columns(3)
+sc1.metric("🇦🇷 Argentina xG", f"{score.home_expected_goals:.2f}")
+sc2.metric("🇪🇸 Spain xG", f"{score.away_expected_goals:.2f}")
+sc3.metric("Most Likely Score", score.most_likely_score, f"{score.most_likely_score_probability*100:.1f}%")
+scoreline_chart(score.top_scorelines, "Argentina", "Spain")
+st.markdown("---")
+
+# Model consensus
+st.markdown("## 🤖 Model Consensus")
+consensus_data = []
+for label, key in MODEL_OPTIONS.items():
+    p = load_predictor(key)
+    r = p.predict("Argentina", "Spain", neutral=True, tournament="FIFA World Cup")
+    consensus_data.append({
+        "Model": label,
+        "Argentina": f"{r.home_win_probability*100:.1f}%",
+        "Draw": f"{r.draw_probability*100:.1f}%",
+        "Spain": f"{r.away_win_probability*100:.1f}%",
+        "Predicted Winner": r.predicted_winner,
+        "Confidence": f"{r.confidence*100:.1f}%",
+    })
+st.dataframe(pd.DataFrame(consensus_data), use_container_width=True, hide_index=True)
 st.markdown("---")
 
 # Semi-final results
-st.markdown("## ✅ Semi-Final Results (Model was correct on both!)")
+st.markdown("## ✅ Semi-Final Results (Both called correctly!)")
 s1, s2 = st.columns(2)
 with s1:
     st.markdown("**SF1 · France vs Spain**")
-    sf1 = make_prediction(active_model, "France", "Spain", True, 60)
-    st.metric("Model predicted", sf1["predicted_winner"])
-    st.markdown("✅ **Actual result: Spain won**")
+    sf1 = predictor.predict("France", "Spain", True, "FIFA World Cup")
+    st.metric("Model predicted", sf1.predicted_winner)
+    st.markdown("✅ **Actual: Spain won 2-0**")
 with s2:
     st.markdown("**SF2 · England vs Argentina**")
-    sf2 = make_prediction(active_model, "England", "Argentina", True, 60)
-    st.metric("Model predicted", sf2["predicted_winner"])
-    st.markdown("✅ **Actual result: Argentina won**")
-st.markdown("---")
-
-# Model comparison
-st.markdown("## 📊 Model Comparison")
-comp_df = pd.DataFrame([
-    {"Model": "Logistic Regression", "Accuracy": "60.2%", "Log Loss": "0.872", "Winner": "✅"},
-    {"Model": "XGBoost", "Accuracy": "59.7%", "Log Loss": "0.886", "Winner": ""},
-])
-st.dataframe(comp_df, use_container_width=True, hide_index=True)
-
-# Feature importance
-st.markdown("## 🔍 XGBoost Feature Importance (Top 10)")
-fi = xgb_model.feature_importance.head(10)
-fig, ax = plt.subplots(figsize=(10, 4))
-fig.patch.set_facecolor("#0e1117")
-ax.set_facecolor("#0e1117")
-ax.barh(fi["feature"][::-1], fi["importance"][::-1], color="#00c853")
-ax.set_xlabel("Importance", color="#aaaaaa")
-ax.set_title("Feature Importance", color="#ffffff")
-ax.tick_params(colors="#aaaaaa")
-ax.spines["bottom"].set_color("#3d4570")
-ax.spines["left"].set_color("#3d4570")
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
-st.pyplot(fig, use_container_width=True)
-plt.close()
+    sf2 = predictor.predict("England", "Argentina", True, "FIFA World Cup")
+    st.metric("Model predicted", sf2.predicted_winner)
+    st.markdown("✅ **Actual: Argentina won 2-1**")
 st.markdown("---")
 
 # Custom predictor
@@ -186,33 +206,45 @@ tournament = st.selectbox("Tournament", ["FIFA World Cup", "FIFA World Cup quali
     "UEFA Euro", "Copa America", "Friendly", "UEFA Nations League", "African Cup of Nations"])
 k_map = {"FIFA World Cup": 60, "FIFA World Cup qualification": 40, "UEFA Euro": 50,
          "Copa America": 50, "Friendly": 20, "UEFA Nations League": 35, "African Cup of Nations": 50}
+show_score = st.checkbox("Show scoreline prediction", value=True)
+
 if st.button("⚡ Predict Match", type="primary", use_container_width=True):
     if home_team == away_team:
         st.error("Please select two different teams.")
     else:
-        pred = make_prediction(active_model, home_team, away_team, neutral, k_map.get(tournament, 20))
-        h2, d2, a2 = pred["home_win_probability"], pred["draw_probability"], pred["away_win_probability"]
+        if show_score:
+            res = predictor.predict_with_score(home_team, away_team, neutral, tournament)
+            out = res["outcome"]
+            sc = res["score"]
+        else:
+            out = predictor.predict(home_team, away_team, neutral, tournament)
         r1, r2, r3, r4 = st.columns(4)
-        r1.metric(f"🏠 {home_team}", f"{h2*100:.1f}%")
-        r2.metric("🤝 Draw", f"{d2*100:.1f}%")
-        r3.metric(f"✈️ {away_team}", f"{a2*100:.1f}%")
-        r4.metric("🏆 Winner", pred["predicted_winner"])
-        prob_bar(h2, d2, a2, home_team, away_team)
-        st.info(f"Elo — {home_team}: {pred['home_elo']:.0f} · {away_team}: {pred['away_elo']:.0f} · Model: {model_choice}")
+        r1.metric(f"🏠 {home_team}", f"{out.home_win_probability*100:.1f}%")
+        r2.metric("🤝 Draw", f"{out.draw_probability*100:.1f}%")
+        r3.metric(f"✈️ {away_team}", f"{out.away_win_probability*100:.1f}%")
+        r4.metric("🏆 Winner", out.predicted_winner)
+        prob_bar(out.home_win_probability, out.draw_probability, out.away_win_probability, home_team, away_team)
+        if show_score:
+            st.markdown("**Scoreline Prediction**")
+            sc1, sc2, sc3 = st.columns(3)
+            sc1.metric(f"{home_team} xG", f"{sc.home_expected_goals:.2f}")
+            sc2.metric(f"{away_team} xG", f"{sc.away_expected_goals:.2f}")
+            sc3.metric("Most Likely Score", sc.most_likely_score, f"{sc.most_likely_score_probability*100:.1f}%")
+            scoreline_chart(sc.top_scorelines, home_team, away_team)
+        st.info(f"Elo — {home_team}: {out.home_elo:.0f} · {away_team}: {out.away_elo:.0f} · {model_label}")
 st.markdown("---")
 
 # Elo Rankings
 st.markdown("## 📊 Current Elo Rankings (Top 30)")
-rankings = engine.get_rankings(limit=30)
-rdf = pd.DataFrame(rankings)
-rdf.columns = ["Rank", "Team", "Elo Rating"]
-rdf["Elo Rating"] = rdf["Elo Rating"].round(1)
+rankings = predictor.rankings(limit=30)
+rankings.columns = ["Rank", "Team", "Elo Rating"]
+rankings["Elo Rating"] = rankings["Elo Rating"].round(1)
 highlight = {"France", "Spain", "England", "Argentina"}
 def hl(row):
     if row["Team"] in highlight:
         return ["background-color: #2d3250; font-weight: bold"] * len(row)
     return [""] * len(row)
-st.dataframe(rdf.style.apply(hl, axis=1), use_container_width=True, hide_index=True, height=600)
+st.dataframe(rankings.style.apply(hl, axis=1), use_container_width=True, hide_index=True, height=600)
 st.markdown("---")
 
 # Rating history
@@ -242,4 +274,4 @@ if selected:
     plt.close()
 
 st.markdown("---")
-st.markdown("<center><sub>WorldCup Intelligence Platform · Python · Scikit-learn · XGBoost · Streamlit · 25,403 matches (2000–2026)</sub></center>", unsafe_allow_html=True)
+st.markdown("<center><sub>WorldCup Intelligence Platform · Python · Scikit-learn · XGBoost · MLP · Streamlit · 25,457 matches (2000–2026)</sub></center>", unsafe_allow_html=True)

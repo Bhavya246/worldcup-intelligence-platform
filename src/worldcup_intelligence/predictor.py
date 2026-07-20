@@ -23,7 +23,7 @@ import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-ModelName = Literal["logistic", "xgboost", "xgboost_calibrated"]
+ModelName = Literal["logistic", "xgboost", "xgboost_tuned", "xgboost_calibrated", "mlp", "ensemble"]
 
 
 @dataclass(frozen=True)
@@ -191,15 +191,25 @@ class MatchPredictor:
 
     def _load_model(self) -> None:
         import joblib
+        if self.model_name == "ensemble":
+            self._ensemble = joblib.load(
+                PROJECT_ROOT / "models" / "ensemble_final.joblib"
+            )
+            self._model = None
+            return
+
         model_paths = {
             "logistic": PROJECT_ROOT / "models" / "logistic_regression.joblib",
             "xgboost": PROJECT_ROOT / "models" / "xgboost_model.joblib",
+            "xgboost_tuned": PROJECT_ROOT / "models" / "xgboost_tuned.joblib",
             "xgboost_calibrated": PROJECT_ROOT / "models" / "xgboost_calibrated.joblib",
+            "mlp": PROJECT_ROOT / "models" / "mlp_model.joblib",
         }
         path = model_paths[self.model_name]
         if not path.exists():
             raise FileNotFoundError(f"Model not found: {path}")
         self._model = joblib.load(path)
+        self._ensemble = None
 
     def _build_state(self, dataset_path: Path | str | None) -> None:
         """Replay all historical matches through the shared feature pipeline."""
@@ -286,7 +296,16 @@ class MatchPredictor:
         away_elo = self.get_elo(away_team)
         features = self._build_features(home_team, away_team, neutral, tournament, home_advantage)
 
-        proba = self._model.predict_proba(features)[0]
+        if self.model_name == "ensemble":
+            e = self._ensemble
+            w = e["weights"]
+            proba = (
+                w[0] * e["lr"].predict_proba(features) +
+                w[1] * e["xgb_tuned"].predict_proba(features) +
+                w[2] * e["mlp"].predict_proba(features)
+            )[0]
+        else:
+            proba = self._model.predict_proba(features)[0]
         home_prob = round(float(proba[2]), 4)
         draw_prob = round(float(proba[1]), 4)
         away_prob = round(float(proba[0]), 4)

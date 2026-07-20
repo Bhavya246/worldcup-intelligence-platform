@@ -99,7 +99,7 @@ def calibrate_model(
         for i, c in enumerate(sorted(y_test.unique()))
     ]))
 
-    calibrated = CalibratedClassifierCV(pipeline, method=method, cv="prefit")
+    calibrated = CalibratedClassifierCV(pipeline, method=method, cv=None)
     calibrated.fit(X_test, y_test)
 
     proba_after = calibrated.predict_proba(X_test)
