@@ -112,15 +112,18 @@ pytest tests/ -v
 
 ## 📊 Model Performance
 
-| Model | Accuracy | Log Loss | Brier Score |
-|-------|----------|----------|-------------|
-| Logistic Regression | **60.2%** | **0.872** | 0.171 |
-| XGBoost | 59.7% | 0.886 | 0.173 |
-| XGBoost (calibrated) | 59.7% | 0.869 | 0.171 |
+| Model | Accuracy | Log Loss | Notes |
+|-------|----------|----------|-------|
+| Logistic Regression | 60.37% | 0.872 | Strong baseline |
+| XGBoost | 60.02% | 0.885 | Original |
+| XGBoost (Tuned) | **60.43%** | 0.874 | Best accuracy |
+| MLP Neural Network | 59.88% | 0.879 | Deep learning |
+| Ensemble LR+XGBt+MLP | 60.43% | **0.868** | Best log loss |
 
 > Baseline (random): ~33.3% accuracy
-> Logistic Regression outperforms XGBoost — expected for this problem
-> as the relationship between Elo features and outcomes is largely linear.
+> Ensemble wins on Log Loss — best probability calibration
+> XGBoost Tuned wins on Accuracy
+> For a prediction platform, Log Loss is the more important metric
 
 ---
 
@@ -156,11 +159,12 @@ Custom Elo engine with:
 | Layer | Technology |
 |-------|-----------|
 | Language | Python 3.12 |
-| ML | Scikit-learn 1.9, XGBoost 3.3 |
+| ML | Scikit-learn 1.9, XGBoost 3.3, MLP Neural Network |
 | Data | Pandas, NumPy |
 | Dashboard | Streamlit 1.59 |
 | Serialization | Joblib |
 | Testing | Pytest (36 tests) |
+| Score Prediction | Poisson Regression (Dixon-Coles) |
 
 ---
 
